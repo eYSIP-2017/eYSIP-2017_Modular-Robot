@@ -1,3 +1,8 @@
 # eYSIP-2017_Modular-Robot
 
-26/05/2017 - Added report on project approach. Resources can be found here: https://goo.gl/4ZXmfM
+## Project Log
+* ### Week 1: 23/05/2017 to 28/
+ - Added Wiki page 'Testing the modules involved'
+ - Started learning V-Rep and Lua scripting for simulating robot motions. 
+ 
+ 
