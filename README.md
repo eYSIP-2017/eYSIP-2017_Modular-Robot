@@ -7,5 +7,8 @@ A modular robot largely based of Alberto's [Dtto:Modular Robot](https://hackaday
      - Tested the components given: Servo SG90, Bluetooth Module HC05, Arduino Nano, 1s 500mAh LiPos and Sharp IR GP2Y0A21.
      - Added Wiki page 'Testing the modules involved'
      - Started learning V-Rep and Lua scripting for simulating robot motions. 
+ * ### Week 2: 29/05/2017 to 4/06/2017
+     - Tested the VL53L0X Lased Distance Measurement sensor, which offers precise distance measurement in a tiny package.
+     - Practicing V-Rep simulations.
  
  
