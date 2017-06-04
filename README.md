@@ -13,6 +13,6 @@ A modular robot largely based of Alberto's [Dtto:Modular Robot](https://hackaday
      - Detected Wall/Obstacle using proximity sensor and restructured modules to cross it using 4 modules snake in V-REP.
 	 - Added Wiki page 'V-REP Simulations'
 	 - Edited CAD files of modules to increase hole diameter to 2mm due to screw unavailability
-	 - NOTE: Module development delayed due to screw unavailability and also lately facing problems in 3D printer
+	 - *NOTE: Module development delayed due to screw unavailability and also lately facing problems in 3D printer*
  
  
