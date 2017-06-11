@@ -14,5 +14,11 @@ A modular robot largely based of Alberto's [Dtto:Modular Robot](https://hackaday
 	 - Added Wiki page 'V-REP Simulations'
 	 - Edited CAD files of modules to increase hole diameter to 2mm due to screw unavailability
 	 - *NOTE: Module development delayed due to screw unavailability and also lately facing problems in 3D printer*
+* ### Week 3: 05/06/2017 to 11/06/2017
+     - Progress presentation 1 given on 06/06/2017.
+     - Interfaced RF Module NRF24L01 and servo MG90S(for the hinges).
+     - First Dtto V2 module build completed! Tested crawl motion with existing program.
+     - 1.5x4mm screws found, decreased hole diameter for future modules.
+     - Started writing a fresh program from scratch.
  
  
