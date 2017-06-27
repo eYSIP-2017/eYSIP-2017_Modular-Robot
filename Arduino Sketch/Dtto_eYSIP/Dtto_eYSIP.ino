@@ -1,7 +1,6 @@
 /*
  * Authors: Srijal Poojari, Madhav Wagh
- * Description: Our program created for the Dtto modular robot based off 
- * the original work by Alberto(https://hackaday.io/project/9976-dtto-explorer-modular-robot)
+ * Description: Our program created for the Dtto modular robot for eYSIP 2017.
  * This standalone program includes code for both master and slave modules.
  * 
  * Function List: setup(), loop(), get_module_num(), assign_module_num(),
@@ -119,48 +118,45 @@ void loop() {
   bluetooth.println(final_rx_data);
   case 'r': //Run, sinusoidal control
   #if HAS_SENSOR
-    if (!stop_flag) {
+    if (!stop_flag) {    //If stop_flag not raised
       snake();
-    } else {
+    } else {    //Else, bot stopped, check if obstacle has been cleared
+      
       VL53L0X_RangingMeasurementData_t measure;
-      lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-      int distance = 9999;
-      if (measure.RangeStatus != 4) { // phase failures have incorrect data
-        distance = measure.RangeMilliMeter - 30;
+      lox.rangingTest(&measure, false);
+      int distance;
+      if (measure.RangeStatus != 4) { //If not 'out of range'
+        distance = measure.RangeMilliMeter - 30;    //An offset of 30mm is found across the range.
         //bluetooth.print("Distance (mm): ");
         //bluetooth.println(distance);
-        if (distance < 90) {
+        if (distance < 90) {    //IF closer than 90mm, obstacle still present, remain still
           stop_flag = true;
-          //stop_flag_final=1;
           detach_servos();
 
           radio.stopListening();
-          radio.write("ae", 2);
+          radio.write("ae", 2);    //Also command all bots to stop
           radio.startListening();
         }
-
-        else {
+        else {    // obstacle cleared, continue motion.
           stop_flag = false;
-          //stop_flag_final=0;
           attach_servos();
+          
           radio.stopListening();
-          radio.write("arm", 3);
+          radio.write("arm", 3);   //command other modules to resume motion
           radio.startListening();
         }
-
-      } else {
+      } else {    //If 'out of range', obstacle cleared, continue motion
         stop_flag = false;
-        //stop_flag_final=0;
         attach_servos();
-        //bluetooth.println(" out of range ");
+
         radio.stopListening();
-        radio.write("arm", 3);
+        radio.write("arm", 3);    //Also command other modules
         radio.startListening();
 
       }
       //delay(100);
     }
-  #else
+  #else    //If no sensor, normal motion.
     snake();
   #endif
 
@@ -315,7 +311,7 @@ void snake() {
   
   float male_joint_angle;
   float female_joint_angle;
-  float angle_variation;    //difference between male and female angle values.
+  //float angle_variation;    //difference between male and female angle values.
   
   switch (final_rx_data[2]) {
     
@@ -342,43 +338,42 @@ void snake() {
     servo_angle_female = SERVO_CENTER_F + female_joint_angle;
 
 #if HAS_SENSOR
-    angle_variation = variation(male_joint_angle, female_joint_angle);
-    //bluetooth.println(angle_variation);
+    //angle_variation = variation(male_joint_angle, female_joint_angle);
 
     VL53L0X_RangingMeasurementData_t measure;
 
     if (servo_angle_male > SERVO_CENTER_M
         && servo_angle_female > (SERVO_CENTER_F - 2)
         && servo_angle_female < (SERVO_CENTER_F + 2)) {
+     //condition for front face to face forward is that the half module containing the sensor(female)
+     //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
+          
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
-      lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-      int distance = 9999;
+      lox.rangingTest(&measure, false); //pass measure object
+      int distance;
 
-      if (measure.RangeStatus != 4) { // phase failures have incorrect data
-        distance = measure.RangeMilliMeter - 30;
+      if (measure.RangeStatus != 4) { // If not 'out of range'
+        distance = measure.RangeMilliMeter - 30;     //An offset of 30 is found in readings across the range
         // bluetooth.print("Distance (mm): ");
         // bluetooth.println(distance);
 
-        if (distance < 50) {
-          stop_flag = true;
+        if (distance < 50) {    //If object closer than 50mm,
+          stop_flag = true;    //raise stop flag
           //  bluetooth.println("Stop Flag=1");
 
           servo_angle_male = SERVO_CENTER_M;
           servo_angle_female = SERVO_CENTER_F;
 
-          if (servo_male.read() < servo_angle_male) {
-            for (int i = servo_male.read(); i <= servo_angle_male;
-                i++) {
-              // bluetooth.println(i);
+          //restore hinges to center position
+          if (servo_male.read() < servo_angle_male) {    //servo.read() returns last written value to servo
+            for (int i = servo_male.read(); i <= servo_angle_male; i++) {
               servo_male.write(i);
               delay(30);
             }
           } else {
-            for (int i = servo_male.read(); i >= servo_angle_male;
-                i--) {
-              // bluetooth.println(i);
+            for (int i = servo_male.read(); i >= servo_angle_male; i--) {
               servo_male.write(i);
               delay(30);
             }
@@ -386,21 +381,18 @@ void snake() {
           }
 
           if (servo_female.read() < servo_angle_female) {
-            for (int i = servo_female.read();
-                i <= servo_angle_female; i++) {
+            for (int i = servo_female.read(); i <= servo_angle_female; i++) {
               servo_female.write(i);
               delay(30);
             }
           } else {
-            for (int i = servo_female.read();
-                i >= servo_angle_female; i--) {
-              // bluetooth.println(i);
+            for (int i = servo_female.read(); i >= servo_angle_female; i--) {
               servo_female.write(i);
               delay(30);
             }
           }
         }
-      } 
+      }
     }
 #endif
 
@@ -409,34 +401,33 @@ void snake() {
     break;
     
   case 'f':    //motion with female module facing front
-    male_joint_angle = amp_factor
-        * sin(
-            (speed_factor * t) - (my_num * PI)
-                + (1 - reverse) * PI / 2);
-    female_joint_angle = amp_factor
-        * sin((speed_factor * t) - ((my_num * PI) + reverse * PI / 2));
+    male_joint_angle = amp_factor * sin((speed_factor * t) - (my_num * PI)
+                                         + (1 - reverse) * PI / 2);
+    female_joint_angle = amp_factor * sin((speed_factor * t) - ((my_num * PI) 
+                                         + reverse * PI / 2));
 
     servo_angle_male = SERVO_CENTER_M + male_joint_angle;
     servo_angle_female = SERVO_CENTER_F + female_joint_angle;
 
 #if HAS_SENSOR
-    angle_variation = variation(male_joint_angle, female_joint_angle);
-    //bluetooth.println(angle_variation);
+    //angle_variation = variation(male_joint_angle, female_joint_angle);
 
-    // VL53L0X_RangingMeasurementData_t measure;
+    VL53L0X_RangingMeasurementData_t measure;
 
     if (servo_angle_male > SERVO_CENTER_M
         && servo_angle_female > (SERVO_CENTER_F - 2)
         && servo_angle_female < (SERVO_CENTER_F + 2)) {
-      // bluetooth.println("posM & posF");
+     //condition for front face to face forward is that the half module containing the sensor(female)
+     //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
+          
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
-      lox.rangingTest(&measure, false); // pass in 'true' to get debug data printout!
-      int distance = 9999;
+      lox.rangingTest(&measure, false);
+      int distance;
 
-      if (measure.RangeStatus != 4) { // phase failures have incorrect data
-        distance = measure.RangeMilliMeter - 30;
+      if (measure.RangeStatus != 4) { // If not 'out of range'
+        distance = measure.RangeMilliMeter - 30;    //An offset of 30 is found in readings across the range
         // bluetooth.print("Distance (mm): ");
         // bluetooth.println(distance);
 
@@ -446,18 +437,17 @@ void snake() {
 
           servo_angle_male = SERVO_CENTER_M;
           servo_angle_female = SERVO_CENTER_F;
-
+          
+          //restore hinges to center position
           if (servo_male.read() < servo_angle_male) {
             for (int i = servo_male.read(); i <= servo_angle_male;
                 i++) {
-              // bluetooth.println(i);
               servo_male.write(i);
               delay(30);
             }
           } else {
             for (int i = servo_male.read(); i >= servo_angle_male;
                 i--) {
-              // bluetooth.println(i);
               servo_male.write(i);
               delay(30);
             }
@@ -473,7 +463,6 @@ void snake() {
           } else {
             for (int i = servo_female.read();
                 i >= servo_angle_female; i--) {
-              // bluetooth.println(i);
               servo_female.write(i);
               delay(30);
             }
@@ -492,18 +481,18 @@ void snake() {
   //detachServos();
 }
 
-void set_angle() {
-  bluetooth.println(final_rx_data);
+void set_angle() {    //set a paricular angle to hinge servos
+  //bluetooth.println(final_rx_data);
 
-  int angle = final_rx_data.substring(3, 6).toInt();
+  int angle = final_rx_data.substring(3, 6).toInt();    //get angle parameter and convert to int.
   bluetooth.print("Angle: " + String(angle) + "\n\r");
   attach_servos();
-  if ((angle <= 180) && (angle >= 0)) {
+  if ((angle <= 140) && (angle >= 20)) {    //If angle within range
     switch (final_rx_data[2]) {
-    case 'm':
+    case 'm':    //for male hinge
       servo_male.write(angle);
       break;
-    case 'f':
+    case 'f':    //for female hinge
       servo_female.write(angle);
       break;
     default:
@@ -512,13 +501,14 @@ void set_angle() {
   }
   final_rx_data = "";
 }
-void escape() {
+
+void escape() {    // stop all motion
   t = 0;
   detach_servos();
   reset = 0;
 }
 
-void attach_servos() {
+void attach_servos() {    //attach servos to their pins
   servo_male.attach(6);
   servo_female.attach(5);
   servo_base.attach(10);
@@ -526,7 +516,7 @@ void attach_servos() {
   servo_left.attach(9);
 }
 
-void detach_servos() {
+void detach_servos() {    //detach servos from thier pins
   servo_male.detach();
   servo_female.detach();
   servo_base.detach();
