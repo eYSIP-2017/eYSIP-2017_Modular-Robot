@@ -25,5 +25,12 @@ A modular robot largely based of Alberto's [Dtto:Modular Robot](https://hackaday
      - Interfaced the VL53L0X ToF sensor on one of the female faces.
      - Robot halts when it detects and obstacle and continues when obstacle is removed
      - Concluded that motor torque of MG90S is insufficient for most transformations.
+* ### Week 5: 19/06/2017 to 25/06/2017   
+     - Progress demonstration on 20/06/2017
+     - Added Wiki page 'Building the modules', updated previous pages with more content.
+     - Uploaded Arduino code with documentation
+     - Edited CAD files and printed few parts for 'Mega Dtto', a scaled up version in order to support high torque servo GOTECK GS-5515MG
+     - Started exploring methods to create a virtual Dtto environment for directly programming transformations, and also as a test bench.
+     
  
  
