@@ -2,12 +2,12 @@
  * Authors: Srijal Poojari, Madhav Wagh
  * Description: Our program created for the Dtto modular robot for eYSIP 2017.
  * This standalone program includes code for both master and slave modules.
- * 
+ *
  * Function List: setup(), loop(), get_module_num(), assign_module_num(),
  * listen_bluetooth(), listen_RF(), hook_attach(), snake(), set_angle(), escape(),
  * attach_servos(), detach_servos(), variation().
  */
- 
+
 #include <SoftwareSerial.h>
 #include <Servo.h>
 #include <SPI.h>
@@ -19,6 +19,15 @@
 #define DTTO_TYPE 0   //0 for MASTER module; 1 for the rest of SLAVE modules
 int reverse = 1;      //used to negate angles in sinusoidal motion
 #define HAS_SENSOR 0  //whether vl53l0x sensor is added or not
+#define MODULE_BUILD_NUM 0 //physical id of the module. Used to define servo positions as
+                           //each servo has different 'true physical angle' for angles written by servo.write()
+                           //this is mainly because of modifications done to increase ranges by adding external resistances
+/* example:
+ * If angles in code go from: -90 ---  0 --- 90,
+ * it actually translates to  130 --- 77 --- 26(example values).
+ * i.e. to set 90 degrees on the servo, you actually have to write '26' because
+ * of the modifications we did to increase servo range.
+ */
 /**************************************************************************/
 
 #if HAS_SENSOR
@@ -28,12 +37,28 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();    //define lox object for VL53l0x
 #define CE_PIN 2   //RF24 Chip Enable pin
 #define CSN_PIN 4  //RF24 Chip Select Not pin
 
-int SERVO_CENTER_M = 77;    //Male hinge servo center position, change as per your servo
-int SERVO_CENTER_F = 77;     //Female hinge servo center position, change as per your servo
+
+//------------------------ Servo calibration -----------------------------//
+int servo_center_positions_m[] = {77, 77, 80, 77};   //angles found out for each servo after modifications to increase range
+int servo_min_positions_m[] = {24, 26, 28, 26};
+int servo_max_positions_m[] = {130, 133, 137, 133};
+
+int servo_center_positions_f[] = {70, 74, 80, 74};   //angles found out for each servo after modifications to increase range
+int servo_min_positions_f[] = {20, 28, 28, 22};
+int servo_max_positions_f[] = {128, 130, 137, 130};
+
+#define SERVO_CENTER_M  servo_center_positions_m[MODULE_BUILD_NUM]    //Male hinge servo positions
+#define SERVO_MIN_M  servo_min_positions_m[MODULE_BUILD_NUM] 
+#define SERVO_MAX_M  servo_max_positions_m[MODULE_BUILD_NUM] 
+
+#define SERVO_CENTER_F  servo_center_positions_f[MODULE_BUILD_NUM]     //Female hinge servo positions
+#define SERVO_MIN_F  servo_min_positions_f[MODULE_BUILD_NUM]
+#define SERVO_MAX_F  servo_max_positions_f[MODULE_BUILD_NUM]
 
 #define SERVO_CENTER_HOOK 90  //Servo hook positions, change as per your servo
 #define SERVO_MIN_HOOK 0
 #define SERVO_MAX_HOOK 150
+//-----------------------------------------------------------------------//
 
 //variables for sinusoidal control
 float speed_factor = 0.002; //Speed factor
@@ -120,8 +145,9 @@ void loop() {
   #if HAS_SENSOR
     if (!stop_flag) {    //If stop_flag not raised
       snake();
-    } else {    //Else, bot stopped, check if obstacle has been cleared
-      
+    } 
+    else {    //Else, bot stopped, check if obstacle has been cleared
+
       VL53L0X_RangingMeasurementData_t measure;
       lox.rangingTest(&measure, false);
       int distance;
@@ -140,12 +166,13 @@ void loop() {
         else {    // obstacle cleared, continue motion.
           stop_flag = false;
           attach_servos();
-          
+
           radio.stopListening();
           radio.write("arm", 3);   //command other modules to resume motion
           radio.startListening();
         }
-      } else {    //If 'out of range', obstacle cleared, continue motion
+      } 
+      else {    //If 'out of range', obstacle cleared, continue motion
         stop_flag = false;
         attach_servos();
 
@@ -224,7 +251,8 @@ void listen_bluetooth() {    //listens commands from user via bluetooth
 
     if (bt_rx_data[0] == '1') {         //first character '1' means command is just for master
       final_rx_data = bt_rx_data;
-    } else if (bt_rx_data[0] == 'a') {  //'a' means command for master as well as all slaves
+    } 
+    else if (bt_rx_data[0] == 'a') {  //'a' means command for master as well as all slaves
       final_rx_data = bt_rx_data;
 
       bt_rx_data.toCharArray(rf_tx_data, 8);   //convert received bluetooth command(String) to
@@ -232,7 +260,8 @@ void listen_bluetooth() {    //listens commands from user via bluetooth
       radio.stopListening();
       radio.write(rf_tx_data, 8);
       radio.startListening();
-    } else {                            //command just for slave modules
+    } 
+    else {                            //command just for slave modules
       bt_rx_data.toCharArray(rf_tx_data, 8);    //convert received bluetooth command(String) to
                                                       //char array for rf transmission
       radio.stopListening();
@@ -249,7 +278,6 @@ void listen_RF() {
       //fetch the data payload
       radio.read(rf_rx_data, 8);
     }
-
     if ((rf_rx_data[0] == (my_num + 48)) || (rf_rx_data[0] == 'a')) {
       //If command is for me particularly or for all modules.
       //(my_num + 48) converts int to ASCII equivalent for char comparison
@@ -308,34 +336,31 @@ void snake() {
   }
   t = millis() - t_start;
   reset = 0;
-  
+
   float male_joint_angle;
   float female_joint_angle;
   //float angle_variation;    //difference between male and female angle values.
-  
+
   switch (final_rx_data[2]) {
-    
+
   case 'm':    //motion with male module facing front
-     
+
     /* male_angle = amp_factor * sin(theta + phase + pi/2) = amp_factor * cos(theta + phase)
      * female_angle = amp_factor * sin(theta + phase)
-     * 
+     *
      * cos and sin is interchanged for reverse motion. This can be directly done using the 'reverse' variable(int).
-     * 
+     *
      * theta = time * speed_factor
      * phase = 180*module_nume ,i.e. it negates the sign of cos and sin for every alternate module,
      * since sin(a + pi) = -sin(a) and cos(a + pi) = -cos(a)
-     * 
+     *
      * amplitude factor scales the sin and cos values to degrees.
      */
-     
-    male_joint_angle = amp_factor * sin((speed_factor * t) + (my_num * PI)
-                        + (1 - reverse) * PI / 2);
-    female_joint_angle = amp_factor * sin((speed_factor * t) + (my_num * PI)
-                        + (reverse * PI / 2));
 
-    servo_angle_male = SERVO_CENTER_M + male_joint_angle;    //Apply the offsets from center to get servo angle
-    servo_angle_female = SERVO_CENTER_F + female_joint_angle;
+    servo_angle_male = amp_factor * sin((speed_factor * t) + (my_num * PI)
+                        + (1 - reverse) * PI / 2);
+    servo_angle_female = amp_factor * sin((speed_factor * t) + (my_num * PI)
+                        + (reverse * PI / 2));
 
 #if HAS_SENSOR
     //angle_variation = variation(male_joint_angle, female_joint_angle);
@@ -347,7 +372,7 @@ void snake() {
         && servo_angle_female < (SERVO_CENTER_F + 2)) {
      //condition for front face to face forward is that the half module containing the sensor(female)
      //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
-          
+
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
@@ -369,12 +394,13 @@ void snake() {
           //restore hinges to center position
           if (servo_male.read() < servo_angle_male) {    //servo.read() returns last written value to servo
             for (int i = servo_male.read(); i <= servo_angle_male; i++) {
-              servo_male.write(i);
+              modified_write(servo_male, i, 0);
               delay(30);
             }
-          } else {
+          } 
+          else {
             for (int i = servo_male.read(); i >= servo_angle_male; i--) {
-              servo_male.write(i);
+              modified_write(servo_male, i, 0);
               delay(30);
             }
 
@@ -382,12 +408,13 @@ void snake() {
 
           if (servo_female.read() < servo_angle_female) {
             for (int i = servo_female.read(); i <= servo_angle_female; i++) {
-              servo_female.write(i);
+              modified_write(servo_female, i, 1);
               delay(30);
             }
-          } else {
+          }
+          else {
             for (int i = servo_female.read(); i >= servo_angle_female; i--) {
-              servo_female.write(i);
+              modified_write(servo_female, i, 1);
               delay(30);
             }
           }
@@ -396,30 +423,27 @@ void snake() {
     }
 #endif
 
-    servo_male.write(servo_angle_male);
-    servo_female.write(servo_angle_female);
+    modified_write(servo_male, servo_angle_male, 0);
+    modified_write(servo_female, servo_angle_female, 1);
     break;
-    
-  case 'f':    //motion with female module facing front
-    male_joint_angle = amp_factor * sin((speed_factor * t) - (my_num * PI)
-                                         + (1 - reverse) * PI / 2);
-    female_joint_angle = amp_factor * sin((speed_factor * t) - ((my_num * PI) 
-                                         + reverse * PI / 2));
 
-    servo_angle_male = SERVO_CENTER_M + male_joint_angle;
-    servo_angle_female = SERVO_CENTER_F + female_joint_angle;
+  case 'f':    //motion with female module facing front
+    servo_angle_male = amp_factor * sin((speed_factor * t) - (my_num * PI)
+                                         + (1 - reverse) * PI / 2);
+    servo_angle_female = amp_factor * sin((speed_factor * t) - ((my_num * PI)
+                                         + reverse * PI / 2));
 
 #if HAS_SENSOR
     //angle_variation = variation(male_joint_angle, female_joint_angle);
 
-    VL53L0X_RangingMeasurementData_t measure;
+    //VL53L0X_RangingMeasurementData_t measure;
 
     if (servo_angle_male > SERVO_CENTER_M
         && servo_angle_female > (SERVO_CENTER_F - 2)
         && servo_angle_female < (SERVO_CENTER_F + 2)) {
      //condition for front face to face forward is that the half module containing the sensor(female)
      //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
-          
+
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
@@ -437,18 +461,19 @@ void snake() {
 
           servo_angle_male = SERVO_CENTER_M;
           servo_angle_female = SERVO_CENTER_F;
-          
+
           //restore hinges to center position
           if (servo_male.read() < servo_angle_male) {
             for (int i = servo_male.read(); i <= servo_angle_male;
                 i++) {
-              servo_male.write(i);
+              modified_write(servo_male, i, 0);
               delay(30);
             }
-          } else {
+          } 
+          else {
             for (int i = servo_male.read(); i >= servo_angle_male;
                 i--) {
-              servo_male.write(i);
+              modified_write(servo_male, i, 0);
               delay(30);
             }
 
@@ -457,23 +482,25 @@ void snake() {
           if (servo_female.read() < servo_angle_female) {
             for (int i = servo_female.read();
                 i <= servo_angle_female; i++) {
-              servo_female.write(i);
+              modified_write(servo_female, i, 1);
               delay(30);
             }
-          } else {
+          } 
+          else {
             for (int i = servo_female.read();
                 i >= servo_angle_female; i--) {
-              servo_female.write(i);
+              modified_write(servo_female, i, 1);
               delay(30);
             }
           }
         }
-      } 
+      }
     }
 #endif
 
-    servo_male.write(servo_angle_male);
-    servo_female.write(servo_angle_female);
+    modified_write(servo_male, servo_angle_male, 0);
+    modified_write(servo_female, servo_angle_female, 1);
+    
     break;
   default:
     break;
@@ -484,16 +511,28 @@ void snake() {
 void set_angle() {    //set a paricular angle to hinge servos
   //bluetooth.println(final_rx_data);
 
-  int angle = final_rx_data.substring(3, 6).toInt();    //get angle parameter and convert to int.
+  //Two types of commands can be: 1sm90, 1sm-90
+  //So for negative angles we must check for the '-' character
+  char sign = final_rx_data[3];
+  int angle;
+
+  if (sign == '-'){
+    angle = final_rx_data.substring(4, 6).toInt();    //get angle parameter and convert to int.
+    angle = -1 * angle;
+  }
+  else{
+    angle = final_rx_data.substring(3, 5).toInt();    //get angle parameter and convert to int.
+  }
+  
   bluetooth.print("Angle: " + String(angle) + "\n\r");
   attach_servos();
-  if ((angle <= 140) && (angle >= 20)) {    //If angle within range
+  if ((angle <= 90) && (angle >= -90)) {    //If angle within range
     switch (final_rx_data[2]) {
     case 'm':    //for male hinge
-      servo_male.write(angle);
+      modified_write(servo_male, angle, 0);
       break;
     case 'f':    //for female hinge
-      servo_female.write(angle);
+      modified_write(servo_female, angle, 1);
       break;
     default:
       break;
@@ -522,6 +561,36 @@ void detach_servos() {    //detach servos from thier pins
   servo_base.detach();
   servo_right.detach();
   servo_left.detach();
+}
+
+void modified_write(Servo &servo, int angle, int m_or_f){
+  /* translates ideal physical angles from (-90,90) to angles required
+   * by modified servos to set the required angle.
+   * eg. -90 --- 0 --- 90 translates to 130 --- 77 --- 26
+   * i.e. to set 90 degrees on the servo, you actually have to write '26' because
+   * of the modifications we did to increase servo range.
+   */
+  
+  if (m_or_f == 0){    //male
+    if(angle <= 0 && angle >= -90){
+      int true_angle = map(angle, -90, 0, SERVO_MAX_M, SERVO_CENTER_M);
+      servo.write(true_angle);
+    }
+    else if(angle >= 0 && angle <= 90){
+      int true_angle = map(angle, 0, 90, SERVO_CENTER_M, SERVO_MIN_M);
+      servo.write(true_angle);
+    }  
+  }
+  else if (m_or_f == 1){    //female
+    if(angle <= 0 && angle >= -90){
+      int true_angle = map(angle, -90, 0, SERVO_MAX_F, SERVO_CENTER_F);
+      servo.write(true_angle);
+    }
+    else if(angle >= 0 && angle <= 90){
+      int true_angle = map(angle, 0, 90, SERVO_CENTER_F, SERVO_MIN_F);
+      servo.write(true_angle);
+    }
+  }
 }
 
 float variation(float a, float b) { // absolute difference between 2 values.
