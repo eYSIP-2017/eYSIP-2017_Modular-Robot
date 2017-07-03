@@ -13,13 +13,15 @@
 #include <SPI.h>
 #include <nRF24L01.h>
 #include <RF24.h>
-#include "Adafruit_VL53L0X.h"
+
+#include <Wire.h>
+#include <VL53L0X.h>
 
 /*********************** Change before Upload *****************************/
-#define DTTO_TYPE 0   //0 for MASTER module; 1 for the rest of SLAVE modules
+#define DTTO_TYPE 1   //0 for MASTER module; 1 for the rest of SLAVE modules
 int reverse = 1;      //used to negate angles in sinusoidal motion
 #define HAS_SENSOR 0  //whether vl53l0x sensor is added or not
-#define MODULE_BUILD_NUM 0 //physical id of the module. Used to define servo positions as
+#define MODULE_BUILD_NUM 3 //physical id of the module. Used to define servo positions as
                            //each servo has different 'true physical angle' for angles written by servo.write()
                            //this is mainly because of modifications done to increase ranges by adding external resistances
 /* example:
@@ -31,7 +33,7 @@ int reverse = 1;      //used to negate angles in sinusoidal motion
 /**************************************************************************/
 
 #if HAS_SENSOR
-Adafruit_VL53L0X lox = Adafruit_VL53L0X();    //define lox object for VL53l0x
+VL53L0X tof_sensor;
 #endif
 
 #define CE_PIN 2   //RF24 Chip Enable pin
@@ -39,30 +41,37 @@ Adafruit_VL53L0X lox = Adafruit_VL53L0X();    //define lox object for VL53l0x
 
 
 //------------------------ Servo calibration -----------------------------//
-int servo_center_positions_m[] = {77, 77, 80, 77};   //angles found out for each servo after modifications to increase range
-int servo_min_positions_m[] = {24, 26, 28, 26};
-int servo_max_positions_m[] = {130, 133, 137, 133};
+//angles found out for each servo after modifications to increase range
+int servo_center_positions_m[] = {74, 77, 80, 77};   //male center, 0 degrees
+int servo_min_positions_m[] = {22, 26, 28, 26};      //min postition, 90 degrees
+int servo_max_positions_m[] = {128, 133, 137, 133};  //max postition, -90 degrees
 
-int servo_center_positions_f[] = {70, 74, 80, 74};   //angles found out for each servo after modifications to increase range
-int servo_min_positions_f[] = {20, 28, 28, 22};
-int servo_max_positions_f[] = {128, 130, 137, 130};
+int servo_center_positions_f[] = {70, 74, 80, 74};   //male center, 0 degrees
+int servo_min_positions_f[] = {20, 28, 28, 22};      //min postition, 90 degrees
+int servo_max_positions_f[] = {128, 130, 137, 130};  //max postition, -90 degrees
 
 #define SERVO_CENTER_M  servo_center_positions_m[MODULE_BUILD_NUM]    //Male hinge servo positions
-#define SERVO_MIN_M  servo_min_positions_m[MODULE_BUILD_NUM] 
-#define SERVO_MAX_M  servo_max_positions_m[MODULE_BUILD_NUM] 
+#define SERVO_MIN_M  servo_min_positions_m[MODULE_BUILD_NUM]
+#define SERVO_MAX_M  servo_max_positions_m[MODULE_BUILD_NUM]
 
 #define SERVO_CENTER_F  servo_center_positions_f[MODULE_BUILD_NUM]     //Female hinge servo positions
 #define SERVO_MIN_F  servo_min_positions_f[MODULE_BUILD_NUM]
 #define SERVO_MAX_F  servo_max_positions_f[MODULE_BUILD_NUM]
 
-#define SERVO_CENTER_HOOK 90  //Servo hook positions, change as per your servo
-#define SERVO_MIN_HOOK 0
-#define SERVO_MAX_HOOK 150
+//Servo hook positions, change as per your servo
+#define SERVO_CENTER_HOOK 90  //neutral position
+#define SERVO_MIN_HOOK 0      //hooked postion
+#define SERVO_MAX_HOOK 150    //detach hook
 //-----------------------------------------------------------------------//
+
+//arrays to store mapped angles from software angle: -90---0---90 to the physical angles
+//Values are mapped and stored beforehand as mapping it everytime when required is slower.
+int mapped_angles_m[181];
+int mapped_angles_f[181];
 
 //variables for sinusoidal control
 float speed_factor = 0.002; //Speed factor
-int amp_factor = 30;      //Amplitude factor (basically max angle from center position to either sides)
+int amp_factor = 40;      //Amplitude factor (basically max angle from center position to either sides)
 unsigned long t = 0;      //Time auxiliary variables for time varying sine wave
 unsigned long t_start = 0;
 
@@ -104,6 +113,11 @@ int servo_angle_left = 90;
 
 bool stop_flag = false;    //Flag raised by sensor detection to indicate obstacle
 
+int wheel_run_count = 0;   //number of times the run_wheel() function is run.
+                           //Used to switch betwwen the wheel stages.
+                           
+char sign;   //Sign of angle retrieved from commands
+
 void setup() {
   Serial.begin(9600);
   delay(1000);
@@ -125,10 +139,29 @@ void setup() {
 #endif
 
 #if HAS_SENSOR
-  if (!lox.begin()) {
-    bluetooth.println(F("Failed to boot VL53L0X"));
-  }
+  Wire.begin();
+
+  tof_sensor.init();
+  tof_sensor.setTimeout(500);
+
+  // reduce timing budget to 20 ms (default is about 33 ms)
+  // greater the budget, higher the accuracy but takes more time.
+  tof_sensor.setMeasurementTimingBudget(20000);
 #endif
+
+  //map all software angles to true physical angles and store them.
+  //this saves the calculation time when software angles are written
+  for(int angle = -90; angle <= 0; angle++){   
+    mapped_angles_m[angle + 90] = map(angle, -90, 0, SERVO_MAX_M, SERVO_CENTER_M);
+    //angles go from -90 to 90, and array index goes from 0 to 180,i.e. angle+90
+    mapped_angles_f[angle + 90] = map(angle, -90, 0, SERVO_MAX_F, SERVO_CENTER_F);
+  }
+
+  for(int angle = 1; angle <= 90; angle++){
+    mapped_angles_m[angle + 90] = map(angle, 0, 90, SERVO_CENTER_M, SERVO_MIN_M);
+    mapped_angles_f[angle + 90] = map(angle, 0, 90, SERVO_CENTER_F, SERVO_MIN_F);
+  }
+
 }
 
 void loop() {
@@ -145,14 +178,10 @@ void loop() {
   #if HAS_SENSOR
     if (!stop_flag) {    //If stop_flag not raised
       snake();
-    } 
+    }
     else {    //Else, bot stopped, check if obstacle has been cleared
 
-      VL53L0X_RangingMeasurementData_t measure;
-      lox.rangingTest(&measure, false);
-      int distance;
-      if (measure.RangeStatus != 4) { //If not 'out of range'
-        distance = measure.RangeMilliMeter - 30;    //An offset of 30mm is found across the range.
+      int distance = tof_sensor.readRangeSingleMillimeters() - 30;
         //bluetooth.print("Distance (mm): ");
         //bluetooth.println(distance);
         if (distance < 90) {    //IF closer than 90mm, obstacle still present, remain still
@@ -171,16 +200,6 @@ void loop() {
           radio.write("arm", 3);   //command other modules to resume motion
           radio.startListening();
         }
-      } 
-      else {    //If 'out of range', obstacle cleared, continue motion
-        stop_flag = false;
-        attach_servos();
-
-        radio.stopListening();
-        radio.write("arm", 3);    //Also command other modules
-        radio.startListening();
-
-      }
       //delay(100);
     }
   #else    //If no sensor, normal motion.
@@ -197,6 +216,54 @@ void loop() {
   case 'h':  //attach module(hook)
     hook_attach();
     break;
+
+  case 'n':   //'NOT' angle. Basically switches angle between 2 states, either 0<->90 or 0<->-90
+              //This will be clear once you understand the wheel motion, explained on github.
+    sign = final_rx_data[3];
+    int angle;
+
+    if (sign == '-'){   //If '-' specified by user, angle is negative
+       angle = final_rx_data.substring(4, 6).toInt();    //get angle parameter and convert to int.
+       angle = -1 * angle;
+    }
+    else{
+       angle = final_rx_data.substring(3, 5).toInt();    //get angle parameter and convert to int.
+    }
+
+    //angle = 90, not_male(90) switches between 0 and 90
+    //angle = -90, not_male(-90) switches between 0 and -90
+
+    switch (final_rx_data[2]){
+       case 'm':   //male
+         not_male(angle);
+         break;
+       case 'f':
+         not_female(angle);
+         break;
+
+       default:
+         break;
+    }
+    final_rx_data = "";  //do not repeat command
+
+    break;
+
+#if !DTTO_TYPE   //Command only for master module
+  case 'w':  //wheel
+     switch (final_rx_data[2]){
+       case 'p':   //prepare wheel postion
+         prepare_wheel();
+         final_rx_data = "";  //do not repeat
+         break;
+       case 'r':  //run wheel
+         run_wheel();
+         break;
+       default:
+         break;
+     }
+     break;
+#endif
+
   default:
     break;
   }
@@ -251,7 +318,7 @@ void listen_bluetooth() {    //listens commands from user via bluetooth
 
     if (bt_rx_data[0] == '1') {         //first character '1' means command is just for master
       final_rx_data = bt_rx_data;
-    } 
+    }
     else if (bt_rx_data[0] == 'a') {  //'a' means command for master as well as all slaves
       final_rx_data = bt_rx_data;
 
@@ -260,7 +327,7 @@ void listen_bluetooth() {    //listens commands from user via bluetooth
       radio.stopListening();
       radio.write(rf_tx_data, 8);
       radio.startListening();
-    } 
+    }
     else {                            //command just for slave modules
       bt_rx_data.toCharArray(rf_tx_data, 8);    //convert received bluetooth command(String) to
                                                       //char array for rf transmission
@@ -337,8 +404,6 @@ void snake() {
   t = millis() - t_start;
   reset = 0;
 
-  float male_joint_angle;
-  float female_joint_angle;
   //float angle_variation;    //difference between male and female angle values.
 
   switch (final_rx_data[2]) {
@@ -364,62 +429,34 @@ void snake() {
 
 #if HAS_SENSOR
     //angle_variation = variation(male_joint_angle, female_joint_angle);
-
-    VL53L0X_RangingMeasurementData_t measure;
-
-    if (servo_angle_male > SERVO_CENTER_M
-        && servo_angle_female > (SERVO_CENTER_F - 2)
-        && servo_angle_female < (SERVO_CENTER_F + 2)) {
+    
+    if (servo_angle_male < 0 && servo_angle_female > -2 && servo_angle_female <  2) {
      //condition for front face to face forward is that the half module containing the sensor(female)
      //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
 
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
-      lox.rangingTest(&measure, false); //pass measure object
-      int distance;
+      int distance = tof_sensor.readRangeSingleMillimeters() - 30;
+      
+//      bluetooth.print("Distance (mm): ");
+//      bluetooth.println(distance);
 
-      if (measure.RangeStatus != 4) { // If not 'out of range'
-        distance = measure.RangeMilliMeter - 30;     //An offset of 30 is found in readings across the range
-        // bluetooth.print("Distance (mm): ");
-        // bluetooth.println(distance);
-
-        if (distance < 50) {    //If object closer than 50mm,
+      if (distance < 50) {    //If object closer than 50mm,
           stop_flag = true;    //raise stop flag
           //  bluetooth.println("Stop Flag=1");
 
-          servo_angle_male = SERVO_CENTER_M;
-          servo_angle_female = SERVO_CENTER_F;
-
           //restore hinges to center position
-          if (servo_male.read() < servo_angle_male) {    //servo.read() returns last written value to servo
-            for (int i = servo_male.read(); i <= servo_angle_male; i++) {
-              modified_write(servo_male, i, 0);
-              delay(30);
-            }
-          } 
-          else {
-            for (int i = servo_male.read(); i >= servo_angle_male; i--) {
-              modified_write(servo_male, i, 0);
-              delay(30);
-            }
+          modified_write(servo_male, 0, 0);
+          modified_write(servo_female, 0, 1);
 
-          }
-
-          if (servo_female.read() < servo_angle_female) {
-            for (int i = servo_female.read(); i <= servo_angle_female; i++) {
-              modified_write(servo_female, i, 1);
-              delay(30);
-            }
-          }
-          else {
-            for (int i = servo_female.read(); i >= servo_angle_female; i--) {
-              modified_write(servo_female, i, 1);
-              delay(30);
-            }
-          }
-        }
-      }
+          radio.stopListening();
+          radio.write("asm0", 4);
+          delay(500);
+          radio.write("asf0", 4);
+          delay(500);
+          radio.startListening();
+       }
     }
 #endif
 
@@ -436,71 +473,39 @@ void snake() {
 #if HAS_SENSOR
     //angle_variation = variation(male_joint_angle, female_joint_angle);
 
-    //VL53L0X_RangingMeasurementData_t measure;
-
-    if (servo_angle_male > SERVO_CENTER_M
-        && servo_angle_female > (SERVO_CENTER_F - 2)
-        && servo_angle_female < (SERVO_CENTER_F + 2)) {
+    if (servo_angle_male > 0 && servo_angle_female > -2 && servo_angle_female < 2) {
      //condition for front face to face forward is that the half module containing the sensor(female)
      //has its hinge angle at the center(+2/-2) and the other half must be inclined upward.
 
       // bluetooth.println(servo_angle_male);
       // bluetooth.println(servo_angle_female);
 
-      lox.rangingTest(&measure, false);
-      int distance;
-
-      if (measure.RangeStatus != 4) { // If not 'out of range'
-        distance = measure.RangeMilliMeter - 30;    //An offset of 30 is found in readings across the range
-        // bluetooth.print("Distance (mm): ");
-        // bluetooth.println(distance);
+         int distance = tof_sensor.readRangeSingleMillimeters() - 30;
+//         bluetooth.print("Distance (mm): ");
+//         bluetooth.println(distance);
 
         if (distance < 50) {
           stop_flag = true;
           //  bluetooth.println("Stop Flag=1");
 
-          servo_angle_male = SERVO_CENTER_M;
-          servo_angle_female = SERVO_CENTER_F;
-
           //restore hinges to center position
-          if (servo_male.read() < servo_angle_male) {
-            for (int i = servo_male.read(); i <= servo_angle_male;
-                i++) {
-              modified_write(servo_male, i, 0);
-              delay(30);
-            }
-          } 
-          else {
-            for (int i = servo_male.read(); i >= servo_angle_male;
-                i--) {
-              modified_write(servo_male, i, 0);
-              delay(30);
-            }
+          modified_write(servo_male, 0, 0);
+          modified_write(servo_female, 0, 1);
 
-          }
-
-          if (servo_female.read() < servo_angle_female) {
-            for (int i = servo_female.read();
-                i <= servo_angle_female; i++) {
-              modified_write(servo_female, i, 1);
-              delay(30);
-            }
-          } 
-          else {
-            for (int i = servo_female.read();
-                i >= servo_angle_female; i--) {
-              modified_write(servo_female, i, 1);
-              delay(30);
-            }
-          }
+          radio.stopListening();
+          radio.write("asm0", 4);
+          delay(500);
+          radio.write("asf0", 4);
+          delay(500);
+          radio.startListening();
+         
         }
-      }
     }
 #endif
 
     modified_write(servo_male, servo_angle_male, 0);
     modified_write(servo_female, servo_angle_female, 1);
-    
+
     break;
   default:
     break;
@@ -513,7 +518,7 @@ void set_angle() {    //set a paricular angle to hinge servos
 
   //Two types of commands can be: 1sm90, 1sm-90
   //So for negative angles we must check for the '-' character
-  char sign = final_rx_data[3];
+  sign = final_rx_data[3];
   int angle;
 
   if (sign == '-'){
@@ -523,7 +528,7 @@ void set_angle() {    //set a paricular angle to hinge servos
   else{
     angle = final_rx_data.substring(3, 5).toInt();    //get angle parameter and convert to int.
   }
-  
+
   bluetooth.print("Angle: " + String(angle) + "\n\r");
   attach_servos();
   if ((angle <= 90) && (angle >= -90)) {    //If angle within range
@@ -544,7 +549,8 @@ void set_angle() {    //set a paricular angle to hinge servos
 void escape() {    // stop all motion
   t = 0;
   detach_servos();
-  reset = 0;
+  reset = 1;
+  wheel_run_count = 0;
 }
 
 void attach_servos() {    //attach servos to their pins
@@ -570,25 +576,137 @@ void modified_write(Servo &servo, int angle, int m_or_f){
    * i.e. to set 90 degrees on the servo, you actually have to write '26' because
    * of the modifications we did to increase servo range.
    */
-  
+
   if (m_or_f == 0){    //male
-    if(angle <= 0 && angle >= -90){
-      int true_angle = map(angle, -90, 0, SERVO_MAX_M, SERVO_CENTER_M);
-      servo.write(true_angle);
-    }
-    else if(angle >= 0 && angle <= 90){
-      int true_angle = map(angle, 0, 90, SERVO_CENTER_M, SERVO_MIN_M);
-      servo.write(true_angle);
-    }  
+    int true_angle = mapped_angles_m[angle + 90];   //fetch angle from array
+    //bluetooth.println(true_angle);
+    servo.write(true_angle);
   }
   else if (m_or_f == 1){    //female
-    if(angle <= 0 && angle >= -90){
-      int true_angle = map(angle, -90, 0, SERVO_MAX_F, SERVO_CENTER_F);
-      servo.write(true_angle);
+    int true_angle = mapped_angles_f[angle + 90];
+    //bluetooth.println(true_angle);
+    servo.write(true_angle);
+  }
+}
+
+void prepare_wheel(){  //set the modules at their starting positions
+  attach_servos();
+  
+  //straighten module 1: 0,0
+  modified_write(servo_male, 0, 0);
+  modified_write(servo_female, 0, 1);
+
+  radio.stopListening();
+
+  //module2: 90,-90
+  radio.write("2sm90", 5);
+  delay(1000);
+  radio.write("2sf-90", 6);
+  delay(1000);
+
+  //straigthen module 3: 0,0
+  radio.write("3sm0", 4);
+  delay(1000);
+  radio.write("3sf0", 4);
+  delay(1000);
+
+  //module 4: 90, -90
+  radio.write("4sm90", 5);
+  delay(1000);
+  radio.write("4sf-90", 6);
+  delay(1000);
+
+  radio.startListening();
+}
+
+void run_wheel(){
+  attach_servos();
+
+  if(wheel_run_count % 2){   //retain male, NOT female
+    radio.stopListening();
+    radio.write("anf-90", 6);
+    radio.startListening();
+
+    not_female(-90);
+  }
+  else{    //retain female, NOT male
+    radio.stopListening();
+    radio.write("anm90", 5);
+    radio.startListening();
+
+    not_male(90);
+  }
+  delay(500);
+
+  wheel_run_count++;
+}
+
+void not_male(int side_angle){
+  attach_servos();    //Make sure to attach servos
+  int current_angle = servo_male.read();
+  int speed_delay = 20;
+
+  if (current_angle == SERVO_CENTER_M){  //If servo at center,
+    if(side_angle > 0){                  //go to the appropriate side angle.
+      for(int angle = 0; angle <= side_angle; angle++){
+        modified_write(servo_male, angle, 0);
+        delay(speed_delay);
+      }
     }
-    else if(angle >= 0 && angle <= 90){
-      int true_angle = map(angle, 0, 90, SERVO_CENTER_F, SERVO_MIN_F);
-      servo.write(true_angle);
+    else{
+      for(int angle = 0; angle >= side_angle; angle--){
+        modified_write(servo_male, angle, 0);
+        delay(speed_delay);
+      }
+    }
+  }
+  else if(current_angle == SERVO_MIN_M || current_angle == SERVO_MAX_M){  //If at the sides,
+    if(side_angle > 0){  //go to the center
+      for(int angle = side_angle; angle >= 0; angle-- ){
+        modified_write(servo_male, angle, 0);
+        delay(speed_delay);
+      }
+    }
+    else{
+      for(int angle = side_angle; angle <= 0; angle++){
+        modified_write(servo_male, angle, 0);
+        delay(speed_delay);
+      }
+    }
+  }
+}
+
+void not_female(int side_angle){
+  attach_servos();    //Make sure to attach servos
+  int current_angle = servo_female.read();
+  int speed_delay = 20;
+
+  if (current_angle == SERVO_CENTER_F){   //If servo at center,
+    if(side_angle > 0){                   //go to the appropriate side angle.
+      for(int angle = 0; angle <= side_angle; angle++){
+        modified_write(servo_female, angle, 1);
+        delay(speed_delay);
+      }
+    }
+    else{
+      for(int angle = 0; angle >= side_angle; angle--){
+        modified_write(servo_female, angle, 1);
+        delay(speed_delay);
+      }
+    }
+  }
+  else if(current_angle == SERVO_MIN_F || current_angle == SERVO_MAX_F){   //If at the sides,
+    if(side_angle > 0){                                                   //go to the center
+      for(int angle = side_angle; angle >= 0; angle--){
+        modified_write(servo_female, angle, 1);
+        delay(speed_delay);
+      }
+    }
+    else{
+      for(int angle = side_angle; angle <= 0; angle++){
+        modified_write(servo_female, angle, 1);
+        delay(speed_delay);
+      }
     }
   }
 }
@@ -601,3 +719,4 @@ float variation(float a, float b) { // absolute difference between 2 values.
   d_ab = abs(a_abs - b_abs);
   return d_ab;
 }
+
