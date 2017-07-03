@@ -1,0 +1,3 @@
+Make sure remoteApi.dll, remoteApi.dylib or remoteApi.so is present in this folder depending on your OS.
+See here:http://www.coppeliarobotics.com/helpFiles/en/remoteApiClientSide.htm
+and github wiki at: https://github.com/eYSIP-2017/eYSIP-2017_Modular-Robot/wiki for more details
