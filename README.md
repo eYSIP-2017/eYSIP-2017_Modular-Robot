@@ -31,6 +31,17 @@ A modular robot largely based of Alberto's [Dtto:Modular Robot](https://hackaday
      - Uploaded Arduino code with documentation
      - Edited CAD files and printed few parts for 'Mega Dtto', a scaled up version in order to support high torque servo GOTECK GS-5515MG
      - Started exploring methods to create a virtual Dtto environment for directly programming transformations, and also as a test bench.
+* ### Week 6: 25/06/2017 to 02/07/2017 
+     - Module 4 completed!
+     - Implemented wheel motion using 4 modules.
+     - Completed Virtual Dtto for setting angles, snake motion using Python remoteApi in V-REP.
+     - Created poster for project exhibition.
+     - Project Exhibition on 30/06/2017
+* ### Week 7: 03/07/2017 to 05/07/2017 
+     - Code updated and with better documentation.
+     - Created Wiki page 'Wheel Motion: 4 modules' and 'Virtual Dtto'.
+     - Created Final Report for project submission.
+     - Did some basic testing for the Mega Dtto module.
      
  
  
